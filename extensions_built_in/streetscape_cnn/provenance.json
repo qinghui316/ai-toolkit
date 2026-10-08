@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "source_project": "lunwen/cnn_training",
+  "source_files_sha256": {
+    "model.py": "39b1b02d8dd720fdc4305acdb2377cf9f58d692d4160ecfa791cac34668551d4",
+    "train.py": "fc933362778c5517b7be0ddb8f605dc995fc006c6c4cb0f25d5f46390d5958e9",
+    "reward.py": "9e66331544d6a899f5b893ab5e12a57cb6cb8c30b890b0664d330956b6b92c8e",
+    "targets.py": "b10907917f823f32aacff6db0ee3d8699cd940edd0e84ed69b11cbc6c9de3c8a",
+    "dataset.py": "64c2154d11e3acfda59718947dc215c1513845c079ab6f046aab93f9bb61f369",
+    "final_model.py": "e22d1a817f64674411c946e75684e0d1bdf253c97ae4ffd14431072ecc51a486"
+  },
+  "frozen_checkpoint_sha256": "fb4e439e2c473c51bb0bb07b58d8a318076ac245fe4d54428b25754a6e82294e",
+  "frozen_config_sha256": "b9e32c76b0d56aa965e2d29312c3b09ebc89366907e73c28fd6b95471c0b6d51",
+  "upstream_commit": "ecee894ed2b1f3716d9d7326693061ec1a3105bb",
+  "contract": {
+    "scorer": "ResNet18 shared-delta; checkpoint statistics only; no fitting",
+    "preprocess": "RGB 0..1; differentiable bilinear antialiased resize 224x336; ImageNet normalization",
+    "reward": "inclusive_reward_v1, inclusive_all6, hard minimum, scores clipped 1..10",
+    "auxiliary": "one-step flow-matching clean-latent estimate, not full sampling",
+    "status": "implemented; Linux runtime acceptance pending"
+  }
+}

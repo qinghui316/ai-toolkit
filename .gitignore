@@ -196,3 +196,12 @@ testing/.model_test_outputs
 testing/.engine_test_outputs
 testing/.*
 /issue_review
+
+# External research assets must never enter the code fork.
+/research_assets/
+/research_runs/
+/server_acceptance_results/
+*.pt
+*.pth
+*.safetensors
+*.ckpt

@@ -1,0 +1,62 @@
+---
+# Copy to config/, choose a unique run name, and explicitly fill all null values.
+job: extension
+config:
+  name: krea2_streetscape_cnn_RENAME_ME
+  process:
+    - type: streetscape_cnn_trainer
+      training_folder: research_runs
+      training_seed: null
+      device: cuda:0
+      network:
+        type: lora
+        linear: null
+        linear_alpha: null
+      save:
+        dtype: float32
+        save_every: 250
+        max_step_saves_to_keep: 4
+        push_to_hub: false
+      datasets:
+        - folder_path: ./research_assets/dataset
+          caption_ext: txt
+          shuffle_tokens: false
+          caption_dropout_rate: 0
+          cache_latents_to_disk: true
+          cache_text_embeddings: true
+          resolution: null
+      train:
+        batch_size: 1
+        steps: null
+        lr: null
+        optimizer: adamw8bit
+        lr_scheduler: constant
+        train_unet: true
+        train_text_encoder: false
+        gradient_checkpointing: true
+        gradient_accumulation: 1
+        gradient_accumulation_steps: 1
+        noise_scheduler: flowmatch
+        dtype: bf16
+        disable_sampling: true
+        ema_config:
+          use_ema: false
+      model:
+        arch: krea2
+        name_or_path: krea/Krea-2-Raw
+        quantize: false
+        layer_offloading: false
+      cnn_guidance:
+        enabled: true
+        checkpoint: ./research_assets/cnn/final.pt
+        manifest: ./research_assets/cnn/model_manifest.json
+        weight: null
+        start_step: null
+        sigma_min: null
+        sigma_max: null
+        every_n_steps: 1
+      sample:
+        sampler: flowmatch
+        prompts: []
+meta:
+  research_status: code_implemented_runtime_acceptance_pending
