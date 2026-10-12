@@ -181,4 +181,3 @@ Old output identities are read-only, not resume starting points for new sources.
 The short runs and sample outputs are engineering artifacts, never formal
 generative-quality results. Do not automatically start long training or resize,
 purchase, stop or reinstall the cloud instance.
-

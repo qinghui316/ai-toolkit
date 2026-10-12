@@ -353,7 +353,7 @@ class StreetscapeCNNTrainer(SDTrainer):
         rates = [float(group['lr']) for group in self.optimizer.param_groups]
         self._updates_before_step = getattr(self, '_completed_updates', 0)
         self._cpu_saved_tensor_count = self._cpu_saved_tensor_bytes = 0
-        if self._memory_monitor:
+        if getattr(self, '_memory_monitor', None):
             self._memory_monitor.begin_update(self.step_num)
         try:
             result = super().hook_train_loop(batch)
