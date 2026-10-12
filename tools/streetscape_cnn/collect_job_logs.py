@@ -32,8 +32,8 @@ if __name__ == '__main__':
                 text = log.get(stream.title(), '')
                 if text:
                     streams[stream].append(text)
-                    offsets[stream] += len(text.encode('utf-8'))
                     progressed = True
+                offsets[stream] = log[stream.title() + 'NextOffset']
             if not progressed:
                 break
         for stream, chunks in streams.items():
