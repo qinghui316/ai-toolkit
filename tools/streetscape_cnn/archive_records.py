@@ -17,6 +17,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--root', type=Path, default=Path('/workspace/streetscape'))
     p.add_argument('--output', type=Path, required=True, help='New snapshot folder, outside source outputs')
+    p.add_argument('--run', action='append', help='Explicit completed run names; omit only for an all-runs snapshot')
     args = p.parse_args()
     root, output = args.root.resolve(), args.output.resolve()
     if output.exists():
@@ -39,7 +40,15 @@ def main():
     for name in ['runs', 'configs', 'acceptance', 'tensorboard']:
         source = root / name
         if source.exists():
-            shutil.copytree(source, output / name, copy_function=snapshot_file, ignore=exclude_live_binaries)
+            if name == 'runs' and args.run:
+                (output / name).mkdir()
+                for run_name in args.run:
+                    if Path(run_name).name != run_name or run_name in ('.','..') or '\\' in run_name:
+                        raise ValueError('Expected an explicit run basename')
+                    shutil.copytree(source / run_name, output / name / run_name,
+                                    copy_function=snapshot_file, ignore=exclude_live_binaries)
+            else:
+                shutil.copytree(source, output / name, copy_function=snapshot_file, ignore=exclude_live_binaries)
     if (root / 'public_model_manifest.json').exists():
         shutil.copy2(root / 'public_model_manifest.json', output / 'public_model_manifest.json')
     manifest = root / 'dataset/dataset_manifest.json'
@@ -48,7 +57,7 @@ def main():
         shutil.copy2(root / 'dataset/split.csv', output / 'split.csv')
     for run in (output / 'runs').glob('*'):
         records = run / 'records'
-        for stem in ['steps', 'samples', 'checkpoints', 'failed_samples']:
+        for stem in ['steps', 'samples', 'checkpoints', 'failed_samples', 'memory_phases']:
             source = records / f'{stem}.jsonl'
             if not source.exists():
                 continue

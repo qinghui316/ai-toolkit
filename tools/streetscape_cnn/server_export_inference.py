@@ -12,6 +12,15 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 
+def sampling_settings(args):
+    if not args.prompt or any(not isinstance(text, str) or not text.strip() for text in args.prompt):
+        raise ValueError('Inference prompts must be nonempty strings')
+    # Upstream SampleConfig.neg defaults to False; Krea requires a text string.
+    return {"sampler": "flowmatch", "sample_every": 1, "width": args.width,
+            "height": args.height, "sample_steps": args.steps, "guidance_scale": args.cfg,
+            "seed": args.seed, "walk_seed": False, "prompts": args.prompt, "neg": ""}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("config", help="Filled smoke YAML supplying base model/network/dataset settings")
@@ -63,9 +72,7 @@ def main():
     process["train"].update(steps=0, disable_sampling=False, skip_first_sample=False,
                            force_first_sample=True, start_step=None)
     process["save"]["push_to_hub"] = False
-    process["sample"] = {"sampler": "flowmatch", "sample_every": 1, "width": args.width,
-                         "height": args.height, "sample_steps": args.steps, "guidance_scale": args.cfg,
-                         "seed": args.seed, "walk_seed": False, "prompts": args.prompt}
+    process["sample"] = sampling_settings(args)
     job = get_job(raw)
     import torch
     checked = {'decoder': 0, 'transformer': 0}
