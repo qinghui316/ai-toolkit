@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import platform
 import sys
+import signal
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
@@ -30,6 +31,12 @@ def main():
     if len(processes) != 1 or len(job.process) != 1:
         raise ValueError("Smoke validation requires exactly one streetscape_cnn_trainer")
     trainer = processes[0]
+    from extensions_built_in.streetscape_cnn.runtime import request_stop
+    def graceful_signal(signum, frame):
+        request_stop(trainer.save_root)
+        print('Stop requested; waiting for complete optimizer/save boundary', flush=True)
+    signal.signal(signal.SIGTERM, graceful_signal)
+    signal.signal(signal.SIGINT, graceful_signal)
     intentional_stop = False
     if args.stop_after is not None:
         if args.stop_after >= trainer.train_config.steps:
@@ -49,7 +56,12 @@ def main():
         job.run()
     except KeyboardInterrupt:
         if not intentional_stop:
-            raise
+            from extensions_built_in.streetscape_cnn.contract import read_json
+            status = Path(trainer.save_root) / 'research_status.json'
+            if not status.exists() or read_json(status).get('state') != 'stopped':
+                raise
+            print('User-controlled stop saved; this is not completed acceptance')
+            return
         print("Intentional smoke interruption; rerun the SAME config without --stop-after to verify native resume")
     else:
         if args.check_gradients and not trainer._gradient_verified:

@@ -21,7 +21,7 @@ def scheduler_sigmas(scheduler, timesteps: torch.Tensor) -> torch.Tensor:
 
 def guidance_loss(*, prediction: torch.Tensor, noisy_latents: torch.Tensor,
                   sigmas: torch.Tensor, config: GuidanceConfig, step: int,
-                  decode, scorer) -> tuple[torch.Tensor, dict]:
+                  decode, scorer, observer=None) -> tuple[torch.Tensor, dict]:
     zero = prediction.new_zeros((), dtype=torch.float32)
     metrics = {"cnn/eligible_count": zero, "cnn/full_microbatch": zero + prediction.shape[0],
                "loss/cnn": zero}
@@ -63,4 +63,6 @@ def guidance_loss(*, prediction: torch.Tensor, noisy_latents: torch.Tensor,
                     "cnn/raw_score_mean": result["raw_scores"].mean(),
                     "cnn/raw_score_min": result["raw_scores"].min(),
                     "cnn/raw_score_max": result["raw_scores"].max()})
+    if observer is not None:
+        observer(eligible, result)
     return loss, metrics

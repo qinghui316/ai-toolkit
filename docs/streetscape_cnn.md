@@ -86,7 +86,7 @@ python tools/streetscape_cnn/audit_captions.py "E:\个人项目\lunwen\训练集
 
 ## 5. Linux服务器验收与启动
 
-先将本地研究修改经用户确认推送，再在服务器拉取该版本。目前Fork创建并不意味着这些研究修改已在远端。所有命令均从仓库根目录执行；不要复用原CNN环境。
+研究分支已推送；每次部署仍必须记录并拉取确切提交。所有命令均从仓库根目录执行；不要复用原CNN环境。
 
 ```bash
 python3.12 -m venv .venv
@@ -136,4 +136,22 @@ python tools/streetscape_cnn/server_export_inference.py \
 
 必须逐项确认：关闭兼容、标准化还原与共融一致、step/sigma门控、非法配置与身份拒绝、CNN→LoRA有限非零梯度、冻结参数/缓冲区、真实VAE解码、缓存复用、目标量化/卸载设置、微批次累积、保存/退出/恢复、导出加载。
 
-首次无量化/卸载短测与目标显存配置短测均使用各自独立run，不在同一run途中改参数。任何失败立即停止正式训练，保留日志修复，不自动改科研目标或权重，也不自动开展正式实验。
+当前5090 32GB只验收已登记的FP8和卸载配置，不要求完整无量化模型驻留。任何失败立即停止正式训练，保留日志修复，不自动改科研目标或权重，也不自动开展正式实验。
+
+## 6. 2026-10-12工程部署合同
+
+本轮仅部署与24步工程短测。参考T8视频BV1erTg66Eo5的batch 2、1024单档、rank 32、AdamW8Bit和1e-4起始学习率。视频中的后期提速与回落用于验证学习率日程，不预设正式训练最优参数。
+
+- `local_model_assets`包含raw、text_encoder、vae、manifest。公共模型库须与固定官方版本的权重SHA-256和配置git-blob一致；仅核验实际所用组件，不复制或修改模型库。
+- `research_lr_schedule`使用显式enabled及stages，每项为start_step和lr。工程日程为原生step 0/8/16开始的1e-4/1.5e-4/1e-4；仅与factor=1的原生constant调度器配合。
+- `research_recording`包含enabled、per_sample_scores、archive_checkpoints布尔字段。关闭保持原行为；开启后记录成功更新数与图片呈现次数，二者不能混称训练步数。
+- 研究训练首次OOM及非有限值直接失败，不让上游吞异常跳批。只有OOM可触发已登记的独立batch 1、原生微批次累积2复测，两组配置一致且重新初始化；不降低分辨率或rank。
+- 停止入口为`python tools/streetscape_cnn/server_control.py request-stop --run-dir RUN_DIR`。停止请求绑定内容身份，完整保存后归档消费；恢复不会再次消费旧请求。该入口不加载模型或关闭实例。
+- 逐步与逐样本JSONL位于run的records子目录。未评分为null；所有记录detach后写出，不缓存新预测分数。
+- 每次完整保存归档LoRA、optimizer、scheduler与计数状态、身份及哈希。周期保存使用下一原生step作为恢复进度，避免重复执行已完成更新。仍不保证随机数或数据读取位置逐位恢复。
+- 原生done_hook在释放模型后调用，因此冻结参数/缓冲区校验在最终保存前完成。完成报告单独保存，文件存在不等于验收通过。
+- 独立环境由tools/streetscape_cnn/requirements_server.txt定义，核心组合为Python 3.12、torch 2.9.1/cu128、vision 0.24.1、audio 2.9.1、torchao 0.15.0、torchcodec 0.9.0、bitsandbytes 0.50.2；实际解析结果须冻结。
+
+数据入口为prepare_dataset.py：480个候选ID独立划分384/48/48，原型各48/6/6，新增同批次同原型四状态不拆组，原CNN角色只保留为历史字段。发现打标器无损重编码PNG时，必须对每张核对封存源文件哈希、模式、尺寸和完整像素；新清单同时保留原始和当前文件哈希，不修改原图、描述或旧清单。任一像素不一致立即停止。
+
+服务器依次运行环境和GPU预检、全部单元测试、模型资产与token门禁、真实CNN梯度、普通LoRA及CNN短测（step 8保存退出再恢复）、真实导出加载。烟测采样FlowMatch 30步、CFG 4、seed 42、768×512，仅验证接口。完成后保留全部失败现场与备份，正式训练需另行确认。

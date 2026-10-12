@@ -250,6 +250,8 @@ def portable_process_config(process: Mapping[str, Any]) -> dict:
     for key in ("vae_path", "text_encoder_path"):
         if key in kwargs:
             kwargs[key] = "content-bound-component"
+    if result.get("local_model_assets"):
+        result["local_model_assets"] = {key: "content-bound-asset" for key in result["local_model_assets"]}
     return result
 
 
@@ -271,7 +273,7 @@ def validate_resume_pair(root: Path | str, identity_sha256: str) -> dict:
     record = read_json(root / "streetscape_latest.json")
     if record.get("identity_sha256") != identity_sha256:
         raise ValueError("Latest save belongs to a different research identity")
-    for key in ("lora", "optimizer"):
+    for key in ("lora", "optimizer", *(["trainer_state"] if "trainer_state" in record else [])):
         item = record[key]
         name = item["file"]
         if Path(name).name != name or file_sha256(root / name) != item["sha256"]:
