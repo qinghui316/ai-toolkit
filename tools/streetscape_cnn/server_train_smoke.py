@@ -63,6 +63,9 @@ def main():
             print('User-controlled stop saved; this is not completed acceptance')
             return
         print("Intentional smoke interruption; rerun the SAME config without --stop-after to verify native resume")
+        if getattr(trainer, '_recorder', None):
+            trainer._recorder.status('saved_for_resume', native_step=int(trainer.step_num),
+                                     completed_updates=trainer._completed_updates)
     except Exception as exc:
         from extensions_built_in.streetscape_cnn.contract import write_json_atomic
         chain, cursor = [], exc
