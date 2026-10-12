@@ -82,6 +82,8 @@ def main():
         if args.check_gradients and not trainer._gradient_verified:
             raise RuntimeError("No eligible batch verified CNN -> LoRA gradients; do not mark acceptance passed")
     finally:
+        if trainer._memory_monitor:
+            trainer._memory_monitor.close()
         job.cleanup()
 
 

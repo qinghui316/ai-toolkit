@@ -155,3 +155,30 @@ python tools/streetscape_cnn/server_export_inference.py \
 数据入口为prepare_dataset.py：480个候选ID独立划分384/48/48，原型各48/6/6，新增同批次同原型四状态不拆组，原CNN角色只保留为历史字段。发现打标器无损重编码PNG时，必须对每张核对封存源文件哈希、模式、尺寸和完整像素；新清单同时保留原始和当前文件哈希，不修改原图、描述或旧清单。任一像素不一致立即停止。
 
 服务器依次运行环境和GPU预检、全部单元测试、模型资产与token门禁、真实CNN梯度、普通LoRA及CNN短测（step 8保存退出再恢复）、真实导出加载。烟测采样FlowMatch 30步、CFG 4、seed 42、768×512，仅验证接口。完成后保留全部失败现场与备份，正式训练需另行确认。
+# 32GB memory acceptance v1
+
+The opt-in `cnn_memory_profile` is `legacy` (default), `vae_checkpoint`, or
+`vae_checkpoint_cpu`. The latter policies explicitly enable the frozen Qwen VAE
+decoder's upstream cache-safe, single-frame checkpointing patch. CPU saving uses
+native `torch.autograd.graph.save_on_cpu(pin_memory=False)` only around the
+differentiable VAE/CNN branch. It does not detach the reward or change its math.
+
+`research_memory_acceptance: true` requires durable recording. It measures phase
+allocator peaks, sampled current-process GPU memory (200 ms), RSS and host
+available memory. Native updates fail closed above 28 GiB or when host available
+memory drops below the 2 GiB operational safety reserve. CPU packed-tensor byte
+counts are transfer/work counters, not unique RAM usage. GPU sampling can miss
+short spikes; allocator peaks are recorded separately.
+
+Generate registered independent configs with `make_smoke_configs.py --memory-tier
+1|2|3`. All tiers fix microbatch 1, native accumulation 2, RAW/1024/rank32 and the
+unchanged smoke objective/schedule. P1 uses decoder checkpointing and 50% model
+offload, P2 adds CPU activations, P3 increases model offload to 100%. Run the real
+FP32 parity gate before memory probes. Only a memory-gate failure permits the
+next tier; gradient, frozen-state, resume or host-memory failures stop acceptance.
+Old output identities are read-only, not resume starting points for new sources.
+
+The short runs and sample outputs are engineering artifacts, never formal
+generative-quality results. Do not automatically start long training or resize,
+purchase, stop or reinstall the cloud instance.
+

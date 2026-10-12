@@ -11,6 +11,7 @@ import hashlib
 import shutil
 import time
 import sys
+from contextlib import nullcontext
 from fnmatch import fnmatch
 
 import torch
@@ -25,6 +26,8 @@ from .guidance import guidance_loss, scheduler_sigmas
 from .scorer import FrozenStreetscapeScorer
 from .runtime import ResearchLRSchedule, ResearchRecorder, ResearchAbort, recording_config, stop_requested
 from .contract import image_id
+from .memory import (parse_profile, configure_decoder, scoring_memory_context,
+                     clear_decoder_cache, PhaseMemoryMonitor)
 
 
 def module_fingerprint(module):
@@ -61,6 +64,11 @@ class StreetscapeCNNTrainer(SDTrainer):
         if int(os.getenv("WORLD_SIZE", "1")) != 1:
             raise ValueError("Research extension v1 is single-process; distributed identity/save handling is not accepted")
         self.cnn_guidance = GuidanceConfig.parse(config.get("cnn_guidance"))
+        self.cnn_memory_profile = parse_profile(config.get('cnn_memory_profile'))
+        self.memory_acceptance = config.get('research_memory_acceptance', False)
+        if type(self.memory_acceptance) is not bool:
+            raise ValueError('research_memory_acceptance must be boolean')
+        self._memory_monitor = None
         validate_process(config, self.cnn_guidance)
         validate_explicit_training_settings(config, self.cnn_guidance)
         self.research_schedule = ResearchLRSchedule.parse(config.get('research_lr_schedule'), config['train'])
@@ -169,6 +177,10 @@ class StreetscapeCNNTrainer(SDTrainer):
                                   completed_updates=self._completed_updates)
             optimizer = getattr(self.optimizer, 'optimizer', self.optimizer)
             def before_update(opt, args, kwargs):
+                if self._memory_monitor:
+                    self._memory_monitor.check()
+                    self._optimizer_phase = self._memory_monitor.phase('optimizer_update')
+                    self._optimizer_phase.__enter__()
                 square = 0.0
                 for group in opt.param_groups:
                     for parameter in group['params']:
@@ -179,6 +191,9 @@ class StreetscapeCNNTrainer(SDTrainer):
                 self._gradient_norm = square ** .5
             def after_update(opt, args, kwargs):
                 self._completed_updates += 1
+                if self._memory_monitor:
+                    self._optimizer_phase.__exit__(None, None, None)
+                    self._optimizer_phase = None
             optimizer.register_step_pre_hook(before_update)
             optimizer.register_step_post_hook(after_update)
             if self.cnn_guidance.enabled:
@@ -188,6 +203,15 @@ class StreetscapeCNNTrainer(SDTrainer):
                 if self._vae_fingerprint is not None and actual != self._vae_fingerprint:
                     raise ResearchAbort('Frozen VAE changed across resume')
                 self._vae_fingerprint = actual
+        if self.memory_acceptance:
+            if self._recorder is None:
+                raise ResearchAbort('Memory acceptance requires durable research recording')
+            self._memory_monitor = PhaseMemoryMonitor(self.device_torch, self._recorder)
+            original_backward = self.accelerator.backward
+            def measured_backward(*args, **kwargs):
+                with self._memory_phase('backward'):
+                    return original_backward(*args, **kwargs)
+            self.accelerator.backward = measured_backward
         from importlib.metadata import version, PackageNotFoundError
         versions = {}
         for package in ("torch", "torchvision", "diffusers", "transformers", "accelerate", "peft", "huggingface-hub"):
@@ -208,8 +232,20 @@ class StreetscapeCNNTrainer(SDTrainer):
             raise RuntimeError("VAE was released; auxiliary scoring requires a frozen decoder")
         # Keep it on the graph's device until the complete native train-loop call returns.
         vae.to(clean.device)
-        vae.eval().requires_grad_(False)
-        return self.sd.decode_latents(clean, device=clean.device, dtype=vae.dtype)
+        actual = configure_decoder(vae, getattr(self, 'cnn_memory_profile', 'legacy'))
+        if not getattr(self, '_memory_actual_written', False):
+            write_json_atomic(Path(self.save_root) / 'cnn_memory_actual.json', actual)
+            self._memory_actual_written = True
+        with self._memory_phase('vae_decode'):
+            return self.sd.decode_latents(clean, device=clean.device, dtype=vae.dtype)
+
+    def _memory_phase(self, name):
+        monitor = getattr(self, '_memory_monitor', None)
+        return monitor.phase(name) if monitor else nullcontext()
+
+    def predict_noise(self, *args, **kwargs):
+        with self._memory_phase('generator_forward'):
+            return super().predict_noise(*args, **kwargs)
 
     def _score_for_cnn(self, rgb):
         if self._cnn_scorer is None:
@@ -224,7 +260,8 @@ class StreetscapeCNNTrainer(SDTrainer):
                 raise ResearchAbort('Frozen CNN changed across resume')
             self._cnn_fingerprint = actual
             self._cnn_fingerprint_checked = True
-        return self._cnn_scorer(rgb)
+        with self._memory_phase('cnn_score'):
+            return self._cnn_scorer(rgb)
 
     def calculate_loss(self, noise_pred, noise, noisy_latents, timesteps, batch,
                        mask_multiplier=1.0, prior_pred=None, **kwargs):
@@ -252,10 +289,16 @@ class StreetscapeCNNTrainer(SDTrainer):
         observer = None
         if getattr(self, 'recording_settings', {}).get('per_sample_scores'):
             observer = lambda eligible, result: scored.update(self._observe_scores(eligible, result))
-        auxiliary, metrics = guidance_loss(prediction=noise_pred, noisy_latents=noisy_latents,
-                                           sigmas=sigmas, config=self.cnn_guidance, step=int(self.step_num),
-                                           decode=self._decode_for_cnn, scorer=self._score_for_cnn,
-                                           observer=observer)
+        def packed_tensor(device, size):
+            if device != 'cpu':
+                raise ResearchAbort('Saved activation CPU policy did not store a CPU tensor')
+            self._cpu_saved_tensor_count = getattr(self, '_cpu_saved_tensor_count', 0) + 1
+            self._cpu_saved_tensor_bytes = getattr(self, '_cpu_saved_tensor_bytes', 0) + size
+        with scoring_memory_context(getattr(self, 'cnn_memory_profile', 'legacy'), packed_tensor):
+            auxiliary, metrics = guidance_loss(prediction=noise_pred, noisy_latents=noisy_latents,
+                                               sigmas=sigmas, config=self.cnn_guidance, step=int(self.step_num),
+                                               decode=self._decode_for_cnn, scorer=self._score_for_cnn,
+                                               observer=observer)
         weighted = self.cnn_guidance.weight * auxiliary
         total = base + weighted
         if not torch.isfinite(base).all() or not torch.isfinite(total).all():
@@ -263,7 +306,8 @@ class StreetscapeCNNTrainer(SDTrainer):
         if os.getenv("STREETSCAPE_VERIFY_GRADIENTS") == "1" and auxiliary.requires_grad and not self._gradient_verified:
             # Server acceptance only: extra backward traversal, never enabled by production config.
             parameters = [p for p in self.network.parameters() if p.requires_grad]
-            gradients = torch.autograd.grad(auxiliary, parameters, retain_graph=True, allow_unused=True)
+            with self._memory_phase('auxiliary_gradient_check'):
+                gradients = torch.autograd.grad(auxiliary, parameters, retain_graph=True, allow_unused=True)
             if not any(g is not None and bool((g != 0).any()) for g in gradients):
                 raise RuntimeError("CNN auxiliary loss produced no nonzero LoRA gradients")
             if any(g is not None and not torch.isfinite(g).all() for g in gradients):
@@ -308,6 +352,9 @@ class StreetscapeCNNTrainer(SDTrainer):
                 group['lr'] = rate
         rates = [float(group['lr']) for group in self.optimizer.param_groups]
         self._updates_before_step = getattr(self, '_completed_updates', 0)
+        self._cpu_saved_tensor_count = self._cpu_saved_tensor_bytes = 0
+        if self._memory_monitor:
+            self._memory_monitor.begin_update(self.step_num)
         try:
             result = super().hook_train_loop(batch)
             if self._cnn_log_count:
@@ -315,6 +362,8 @@ class StreetscapeCNNTrainer(SDTrainer):
                                              for key, value in self._cnn_log_sums.items()
                                              if self._cnn_log_weights[key] > 0})
             if getattr(self, '_recorder', None):
+                if self._memory_monitor:
+                    self._memory_monitor.check()
                 if self._completed_updates != self._updates_before_step + 1:
                     raise ResearchAbort('Native optimizer did not perform exactly one update')
                 self._last_successful_step = int(self.step_num)
@@ -328,6 +377,14 @@ class StreetscapeCNNTrainer(SDTrainer):
                        'cuda_peak_allocated': torch.cuda.max_memory_allocated(self.device_torch),
                        'cuda_peak_reserved': torch.cuda.max_memory_reserved(self.device_torch),
                        'native_loss': float(result['loss']), **metrics}
+                if self._memory_monitor:
+                    row.update({'cuda_peak_allocated': self._memory_monitor.peaks['allocated'],
+                                'cuda_peak_reserved': self._memory_monitor.peaks['reserved'],
+                                'sampled_process_gpu_peak': self._memory_monitor.peaks['process_gpu'],
+                                'cpu_rss_peak': self._memory_monitor.peaks['rss'],
+                                'host_available_min': self._memory_monitor.peaks['available_min'],
+                                'cpu_packed_tensor_count': self._cpu_saved_tensor_count,
+                                'cpu_packed_tensor_bytes_not_unique_rss': self._cpu_saved_tensor_bytes})
                 self._recorder.append('steps', row)
                 for sample in self._pending_samples:
                     self._recorder.append('samples', {**sample, 'completed_update': self._completed_updates})
@@ -344,6 +401,8 @@ class StreetscapeCNNTrainer(SDTrainer):
             raise
         finally:
             active_exception = sys.exc_info()[0] is not None
+            if self.cnn_guidance.enabled and self.sd.vae is not None:
+                clear_decoder_cache(self.sd.vae)
             if vae_cpu and self.sd.vae is not None:
                 try:
                     self.sd.vae.to('cpu')
@@ -421,6 +480,8 @@ class StreetscapeCNNTrainer(SDTrainer):
             raise KeyboardInterrupt('Identity-bound user stop after a complete native update/save')
 
     def done_hook(self):
+        if self._memory_monitor:
+            self._memory_monitor.close()
         super().done_hook()
         if getattr(self, '_recorder', None):
             # Native BaseSDTrainProcess deletes self.sd before invoking done_hook.

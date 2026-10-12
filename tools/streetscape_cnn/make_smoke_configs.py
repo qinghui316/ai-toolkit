@@ -12,8 +12,11 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--root', type=Path, default=Path('/workspace/streetscape'))
     p.add_argument('--fallback', action='store_true', help='Approved OOM-only batch 1 / accumulation 2 profile')
+    p.add_argument('--memory-tier', type=int, choices=[1, 2, 3], help='Registered 32GB memory acceptance; fixes batch 1 / accumulation 2')
     args = p.parse_args()
     root = args.root.resolve()
+    if args.memory_tier:
+        args.fallback = True
     profile = 'b1ga2' if args.fallback else 'b2ga1'
     common = {
         'type': 'streetscape_cnn_trainer', 'training_folder': str(root / 'runs'),
@@ -48,16 +51,21 @@ def main():
                                                             {'start_step': 16, 'lr': .0001}]},
         'research_recording': {'enabled': True, 'per_sample_scores': True, 'archive_checkpoints': True},
         'sample': {'sampler': 'flowmatch', 'prompts': []}}
+    if args.memory_tier:
+        common['cnn_memory_profile'] = 'vae_checkpoint' if args.memory_tier == 1 else 'vae_checkpoint_cpu'
+        common['research_memory_acceptance'] = True
+        common['model']['layer_offloading_transformer_percent'] = 1.0 if args.memory_tier == 3 else .5
     for objective in ['base', 'cnn']:
         process = copy.deepcopy(common)
         process['cnn_guidance'] = {'enabled': False} if objective == 'base' else {
             'enabled': True, 'checkpoint': str(root / 'cnn/final.pt'),
             'manifest': str(root / 'cnn/model_manifest.json'), 'weight': .05,
             'start_step': 8, 'sigma_min': .05, 'sigma_max': .50, 'every_n_steps': 1}
-        value = {'job': 'extension', 'config': {'name': f'krea2_streetscape_{objective}_smoke_1024_{profile}_v1',
+        suffix = f'_mem_p{args.memory_tier}' if args.memory_tier else ''
+        value = {'job': 'extension', 'config': {'name': f'krea2_streetscape_{objective}_smoke_1024_{profile}{suffix}_v1',
                                                'process': [process]},
                  'meta': {'research_status': 'engineering_smoke_only_not_production'}}
-        path = root / 'configs' / f'{objective}_{profile}.json'
+        path = root / 'configs' / f'{objective}_{profile}{suffix}.json'
         if path.exists() and read_json(path) != value:
             raise ValueError('Existing engineering configuration differs; no overwrite')
         write_json_atomic(path, value)
