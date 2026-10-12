@@ -18,6 +18,7 @@ def main():
     p.add_argument('--root', type=Path, default=Path('/workspace/streetscape'))
     p.add_argument('--output', type=Path, required=True, help='New snapshot folder, outside source outputs')
     p.add_argument('--run', action='append', help='Explicit completed run names; omit only for an all-runs snapshot')
+    p.add_argument('--gzip', action='store_true', help='Compress snapshot without deleting any history')
     args = p.parse_args()
     root, output = args.root.resolve(), args.output.resolve()
     if output.exists():
@@ -26,9 +27,10 @@ def main():
     # No original images/captions, CNN weights, public model weights, or credentials.
     def snapshot_file(source, target):
         path = Path(source)
-        if 'checkpoints' in path.parts and path.suffix in {'.pt', '.safetensors'}:
-            # Published checkpoint folders are immutable. Hard-link their large
-            # payloads on this filesystem instead of requiring a second full copy.
+        if path.suffix in {'.pt', '.safetensors'}:
+            # Call only after all selected runs/jobs completed. Checkpoint and
+            # zero-update inference binaries are immutable; live run binaries
+            # are excluded below. Preserve them without another disk-sized copy.
             os.link(source, target)
             return target
         return shutil.copy2(source, target)
@@ -80,10 +82,11 @@ def main():
     files = {file.relative_to(output).as_posix(): file_sha256(file) for file in sorted(output.rglob('*')) if file.is_file()}
     write_json_atomic(output / 'result_manifest.json', {'schema_version': 1, 'files': files,
                                                        'scope': 'engineering outputs, not final model quality evidence'})
-    archive = output.with_suffix('.tar')
+    archive = output.with_suffix('.tar.gz' if args.gzip else '.tar')
     if archive.exists():
         raise ValueError('Snapshot archive already exists')
-    with tarfile.open(archive, 'w') as package:
+    options = {'compresslevel': 1} if args.gzip else {}
+    with tarfile.open(archive, 'w:gz' if args.gzip else 'w', **options) as package:
         package.add(output, arcname=output.name)
     print(json.dumps({'archive': str(archive), 'archive_sha256': file_sha256(archive),
                       'file_count': len(files), 'bytes': archive.stat().st_size}), flush=True)
