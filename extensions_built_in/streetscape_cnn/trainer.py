@@ -213,8 +213,10 @@ class StreetscapeCNNTrainer(SDTrainer):
 
     def _score_for_cnn(self, rgb):
         if self._cnn_scorer is None:
-            self._cnn_scorer = FrozenStreetscapeScorer.from_checkpoint(
-                self.cnn_guidance.checkpoint, self.cnn_guidance.manifest).to(rgb.device)
+            # Building then loading a ResNet must not consume the generator's RNG.
+            with torch.random.fork_rng(devices=[]):
+                self._cnn_scorer = FrozenStreetscapeScorer.from_checkpoint(
+                    self.cnn_guidance.checkpoint, self.cnn_guidance.manifest).to(rgb.device)
         self._cnn_scorer.to(rgb.device).eval()
         if getattr(self, '_recorder', None) and not getattr(self, '_cnn_fingerprint_checked', False):
             actual = module_fingerprint(self._cnn_scorer)

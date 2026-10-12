@@ -63,6 +63,18 @@ def main():
             print('User-controlled stop saved; this is not completed acceptance')
             return
         print("Intentional smoke interruption; rerun the SAME config without --stop-after to verify native resume")
+    except Exception as exc:
+        from extensions_built_in.streetscape_cnn.contract import write_json_atomic
+        chain, cursor = [], exc
+        while cursor is not None and len(chain) < 12:
+            chain.append(cursor)
+            cursor = cursor.__cause__
+        oom = any('out of memory' in str(e).lower() or 'memory exhaustion' in str(e).lower()
+                  for e in chain)
+        write_json_atomic(Path(trainer.save_root) / 'runner_failure.json',
+                          {'error_type': type(exc).__name__, 'message': str(exc), 'cuda_oom': oom,
+                           'status': 'failed; no automatic scientific parameter changes'})
+        raise
     else:
         if args.check_gradients and not trainer._gradient_verified:
             raise RuntimeError("No eligible batch verified CNN -> LoRA gradients; do not mark acceptance passed")
