@@ -21,6 +21,13 @@ def sampling_settings(args):
             "seed": args.seed, "walk_seed": False, "prompts": args.prompt, "neg": ""}
 
 
+def zero_update_settings():
+    # Native run() always samples at the end. Skip the separate initial sample
+    # so a zero-update acceptance job generates exactly the three registered images.
+    return dict(steps=0, disable_sampling=False, skip_first_sample=True,
+                force_first_sample=False, start_step=None)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("config", help="Filled smoke YAML supplying base model/network/dataset settings")
@@ -69,8 +76,7 @@ def main():
     process["training_folder"] = str(args.output.parent.resolve())
     process.pop("name", None)
     process["network"]["pretrained_lora_path"] = str(args.export.resolve())
-    process["train"].update(steps=0, disable_sampling=False, skip_first_sample=False,
-                           force_first_sample=True, start_step=None)
+    process["train"].update(zero_update_settings())
     process["save"]["push_to_hub"] = False
     process["sample"] = sampling_settings(args)
     job = get_job(raw)
@@ -96,7 +102,7 @@ def main():
     images = [p for p in (args.output / "samples").rglob("*")
               if p.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}]
     if len(images) != len(args.prompt) or not all(checked.values()):
-        raise RuntimeError("No inference image produced; export loading not accepted")
+        raise RuntimeError(f'Expected {len(args.prompt)} finite native inference images, found {len(images)}; checks={checked}')
     from PIL import Image
     for file in images:
         with Image.open(file) as image:
