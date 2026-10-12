@@ -1,7 +1,9 @@
 import unittest
 from types import SimpleNamespace
 from toolkit.config_modules import SampleConfig
-from tools.streetscape_cnn.server_export_inference import sampling_settings, zero_update_settings
+from tools.streetscape_cnn.server_export_inference import sampling_settings, zero_update_settings, native_sample_images
+from tempfile import TemporaryDirectory
+from pathlib import Path
 
 
 class ExportSettingsTests(unittest.TestCase):
@@ -24,3 +26,12 @@ class ExportSettingsTests(unittest.TestCase):
         self.assertTrue(value['skip_first_sample'])
         self.assertFalse(value['force_first_sample'])
         self.assertFalse(value['disable_sampling'])
+
+    def test_native_thumbnails_are_not_extra_generated_images(self):
+        with TemporaryDirectory() as root:
+            folder=Path(root)/'samples'
+            (folder/'.thumbs').mkdir(parents=True)
+            for index in range(3):
+                (folder/f'{index}.jpg').touch()
+                (folder/'.thumbs'/f'{index}.jpg.jpg').touch()
+            self.assertEqual(len(native_sample_images(root)),3)

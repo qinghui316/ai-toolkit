@@ -28,6 +28,12 @@ def zero_update_settings():
                 force_first_sample=False, start_step=None)
 
 
+def native_sample_images(output):
+    # Native .thumbs images are derived previews, not additional generated samples.
+    return sorted(path for path in (Path(output)/'samples').glob('*') if path.is_file()
+                  and path.suffix.lower() in {'.png','.jpg','.jpeg','.webp'})
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("config", help="Filled smoke YAML supplying base model/network/dataset settings")
@@ -99,8 +105,7 @@ def main():
         job.run()
     finally:
         job.cleanup()
-    images = [p for p in (args.output / "samples").rglob("*")
-              if p.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}]
+    images = native_sample_images(args.output)
     if len(images) != len(args.prompt) or not all(checked.values()):
         raise RuntimeError(f'Expected {len(args.prompt)} finite native inference images, found {len(images)}; checks={checked}')
     from PIL import Image
