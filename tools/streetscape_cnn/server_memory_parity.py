@@ -24,6 +24,13 @@ def main():
     from extensions_built_in.streetscape_cnn.contract import write_json_atomic
     from types import SimpleNamespace
     patch_qwen_vae_gradient_checkpointing()
+    # An FP32 reference must not silently execute cuDNN convolutions in TF32.
+    # These flags are confined to this isolated parity process, not training.
+    torch.backends.cuda.matmul.allow_tf32 = False
+    torch.backends.cudnn.allow_tf32 = False
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True
+    torch.set_float32_matmul_precision('highest')
     torch.manual_seed(20260909)
     vae = QwenImageVAE.from_pretrained('/model/ModelScope/krea/Krea-2-Raw', subfolder='vae', torch_dtype=torch.float32).to('cuda').eval().requires_grad_(False)
     scorer = FrozenStreetscapeScorer.from_checkpoint(args.root/'cnn/final.pt', args.root/'cnn/model_manifest.json').to('cuda').eval()
@@ -36,7 +43,7 @@ def main():
     with torch.no_grad():
         latent = QwenImageVAEHolderMixin.encode_images(holder, [rgb[0]*2-1])
     rows, reference = [], None
-    for profile in ('legacy', 'vae_checkpoint', 'vae_checkpoint_cpu', 'vae_checkpoint'):
+    for profile in ('legacy', 'legacy', 'vae_checkpoint', 'vae_checkpoint_cpu', 'vae_checkpoint'):
         clear_decoder_cache(vae)
         configure_decoder(vae, profile)
         x = latent.clone().requires_grad_()
@@ -52,6 +59,8 @@ def main():
         if reference is None:
             reference = values
         if errors[0] > 1e-5 or errors[1] > 1e-5 or errors[2] > 1e-4:
+            write_json_atomic(args.output, {'state':'failed','cases':rows,
+                                           'failed_profile':profile,'errors':errors,'tf32':False})
             raise RuntimeError(f'FP32 memory-policy parity rejected: {profile}: {errors}')
         if profile == 'vae_checkpoint_cpu' and (not packed or any(device != 'cpu' for device,size in packed)):
             raise RuntimeError('Native saved tensors were not actually stored on CPU')
@@ -61,7 +70,8 @@ def main():
         gc.collect()
     if before != (module_fingerprint(vae), module_fingerprint(scorer)) or any(p.grad is not None or p.requires_grad for m in (vae,scorer) for p in m.parameters()):
         raise RuntimeError('Frozen VAE/CNN state changed')
-    write_json_atomic(args.output, {'cases':rows,'frozen_state_unchanged':True,'size':[256,384]})
+    write_json_atomic(args.output, {'state':'passed','cases':rows,'frozen_state_unchanged':True,
+                                   'size':[256,384],'tf32':False,'cudnn_deterministic':True})
     print('Real FP32 VAE/CNN memory-policy parity and repeat-cache checks passed', flush=True)
 
 if __name__ == '__main__':
