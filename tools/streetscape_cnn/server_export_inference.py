@@ -17,7 +17,7 @@ def main():
     parser.add_argument("config", help="Filled smoke YAML supplying base model/network/dataset settings")
     parser.add_argument("export", type=Path)
     parser.add_argument("--output", type=Path, required=True, help="New EMPTY acceptance output directory")
-    parser.add_argument("--prompt", required=True)
+    parser.add_argument("--prompt", action='append', required=True)
     parser.add_argument("--steps", type=int, required=True, help="Inference sampler steps, not training steps")
     parser.add_argument("--cfg", type=float, required=True)
     parser.add_argument("--width", type=int, required=True)
@@ -55,6 +55,8 @@ def main():
     process["model"] = resolved["model"]
     process["type"] = "sd_trainer"
     process.pop("cnn_guidance", None)
+    process.pop('cnn_memory_profile', None)
+    process.pop('research_memory_acceptance', None)
     process["training_folder"] = str(args.output.parent.resolve())
     process.pop("name", None)
     process["network"]["pretrained_lora_path"] = str(args.export.resolve())
@@ -63,20 +65,41 @@ def main():
     process["save"]["push_to_hub"] = False
     process["sample"] = {"sampler": "flowmatch", "sample_every": 1, "width": args.width,
                          "height": args.height, "sample_steps": args.steps, "guidance_scale": args.cfg,
-                         "seed": args.seed, "walk_seed": False, "prompts": [args.prompt]}
+                         "seed": args.seed, "walk_seed": False, "prompts": args.prompt}
     job = get_job(raw)
+    import torch
+    checked = {'decoder': 0, 'transformer': 0}
+    trainer = job.process[0]
+    original_hook = trainer.hook_after_model_load
+    def finite_hook(name):
+        def check(module, inputs, output):
+            if not isinstance(output, torch.Tensor) or not torch.isfinite(output).all():
+                raise RuntimeError(f'Non-finite {name} inference output')
+            checked[name] += 1
+        return check
+    def loaded():
+        original_hook()
+        trainer.sd.vae.decoder.register_forward_hook(finite_hook('decoder'))
+        trainer.sd.model.register_forward_hook(finite_hook('transformer'))
+    trainer.hook_after_model_load = loaded
     try:
         job.run()
     finally:
         job.cleanup()
     images = [p for p in (args.output / "samples").rglob("*")
               if p.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}]
-    if not images:
+    if len(images) != len(args.prompt) or not all(checked.values()):
         raise RuntimeError("No inference image produced; export loading not accepted")
+    from PIL import Image
+    for file in images:
+        with Image.open(file) as image:
+            image.verify()
     write_json_atomic(args.output / "export_inference_acceptance.json",
                       {"export_sha256": file_sha256(args.export), "optimizer_steps": 0,
                        "base_model": process["model"]["name_or_path"],
                        "training_identity_sha256": object_sha256(identity),
+                       'finite_output_checks': checked, 'prompts': args.prompt, 'seed': args.seed,
+                       'sampler_steps': args.steps, 'cfg': args.cfg, 'width': args.width, 'height': args.height,
                        "image_files": [p.relative_to(args.output).as_posix() for p in images],
                        "status": "native adapter load/sample completed; not a quality benchmark"})
 

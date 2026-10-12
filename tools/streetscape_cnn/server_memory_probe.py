@@ -98,6 +98,8 @@ def main():
             trainer.optimizer.zero_grad(set_to_none=True)
             trainer._memory_monitor.begin_update(8)
             loss_value=trainer.train_single_accumulation(batch,accum_scale=.5)
+            from toolkit.memory_management import sync_grad_transfers
+            sync_grad_transfers()
             trainer._memory_monitor.check()
             gradients=[param.grad for param in trainer.network.parameters() if param.requires_grad and param.grad is not None]
             if not gradients or any(not torch.isfinite(g).all() for g in gradients) or not any((g!=0).any() for g in gradients):

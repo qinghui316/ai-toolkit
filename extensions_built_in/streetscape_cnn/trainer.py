@@ -118,6 +118,8 @@ class StreetscapeCNNTrainer(SDTrainer):
         cnn = validate_cnn_files(self.cnn_guidance.checkpoint, self.cnn_guidance.manifest) if self.cnn_guidance.enabled else None
         materialized, assets = resolve_krea_assets(original, previous.get("model_assets") if previous else None)
         self.research_identity = {"schema_version": 1, "upstream_commit": UPSTREAM_COMMIT,
+                                  "research_commit": subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=repo,
+                                                                    check=True, capture_output=True, text=True).stdout.strip(),
                                   "objective": OBJECTIVE_VERSION, "configuration": configuration,
                                   "guidance": self.cnn_guidance.identity(), "cnn": cnn,
                                   "datasets": datasets, "model_assets": assets,
