@@ -14,9 +14,18 @@ config:
         linear_alpha: null
       save:
         dtype: float32
-        save_every: 250
-        max_step_saves_to_keep: 4
+        save_every: 1000
+        max_step_saves_to_keep: 2
         push_to_hub: false
+      logging:
+        log_every: 1
+        use_wandb: false
+      research_recording:
+        enabled: true
+        per_sample_scores: true
+        # Complete archives are created only on saves, not on every update.
+        # max_step_saves_to_keep controls native LoRA files, not these archives.
+        archive_checkpoints: true
       datasets:
         - folder_path: ./research_assets/dataset
           caption_ext: txt

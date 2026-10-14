@@ -181,3 +181,25 @@ Old output identities are read-only, not resume starting points for new sources.
 The short runs and sample outputs are engineering artifacts, never formal
 generative-quality results. Do not automatically start long training or resize,
 purchase, stop or reinstall the cloud instance.
+
+## 2026-10-14保存策略调整
+
+两个研究配置模板改为 `save_every: 1000`、`max_step_saves_to_keep: 2`，关闭自动推送模型；逐步日志和逐样本研究记录保持开启。正式步数、学习率、CNN权重及启用点仍是待确认参数，本次没有启动服务器或训练。
+
+保存周期按上游原生step计算，不按epoch保存。原生周期保存使用零起始索引，研究扩展发布下一步进度，因此文件名可能为1001、2001等；分析以记录中的 `completed_updates` 和配对清单为准，不根据文件名猜测更新数。正常完成和用户请求安全停止仍会额外保存，未满周期不代表可以直接丢弃当前进度。
+
+`max_step_saves_to_keep: 2`只限制原生历史LoRA文件；最终无编号导出及最新优化器／调度计数状态另行保留，不代表“最多两组完整断点”。`research_recording.archive_checkpoints: true`仍在每次完整保存时复制权重、优化器和研究状态，以保留完整配对；它不会在每次更新时复制模型，也不受原生历史LoRA数量限制。
+
+按建议的4000步预算，周期保存加最终保存通常约四次，安全停止会增加次数。参考已有同规格工程产物，每组完整归档的合计体量约为数GiB，不是此前每4步归档的高频策略；这只是规划估算，正式运行前必须检查真实剩余空间及单次保存峰值，不能据此保证磁盘必然足够。更长训练需要重新核算，不能把该模板当作无限期滚动归档。
+
+当前不新增历史断点自动删除逻辑、不删除已有实验文件，也不把工程模型回传本地。新增保存策略测试留待下一次Linux服务器验证；本地只做配置解析、源码审查、语法检查与中文乱码扫描。
+
+## 2026-10-14早期拟合观察
+
+新实例 `cpod-1wgslxfeojqq` 为上海二C的4090 48GB。用户确认本轮使用现有系统盘 `/workspace/streetscape`；`/cloud` 当前没有独立挂载，不把系统盘目录冒充持久化数据盘，不自动购买存储或处理上海二B旧盘。
+
+本轮先做4步独立短测，再从RAW重新开始1000次优化器更新的基础LoRA观察。CNN关闭；学习率恒定1e-4，rank/alpha32、1024分桶、物理batch1与原生累积2、种子20260909及P1的冻结量化/卸载参数保持不变。预览每250个原生step执行，检查点周期仍1000；预览不触发优化器保存。正常结束或安全停止保存完整配对。
+
+`make_fit_probe_configs.py`从既有480张划分清单锁定训练/验证各8条描述，每种原型取最小ID，排除测试提示词。预览统一768×512、FlowMatch30步、CFG4、seed42、LoRA倍率1；记录原生step与成功更新数的对应，不靠文件名判断拟合步数。先看场景适配和损失趋势，不把固定步数当作成熟保证，也不宣称CNN有效。
+
+新区域Qwen文本编码器的公共库路径可显式传给配置生成器和服务器预检，仍按固定官方内容哈希验收，不因路径变化替换版本。数据、CNN、代码和记录从本地部署；不继承旧工程LoRA，不回传模型。1000步结束后报告趋势并停止，后续CNN启用点另行锁定。

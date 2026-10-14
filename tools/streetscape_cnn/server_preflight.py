@@ -18,6 +18,9 @@ def main():
     p.add_argument('--dataset', type=Path, required=True)
     p.add_argument('--asset-manifest', type=Path, required=True)
     p.add_argument('--output', type=Path, required=True)
+    p.add_argument('--raw-path', type=Path, default=Path('/model/ModelScope/krea/Krea-2-Raw/raw.safetensors'))
+    p.add_argument('--text-encoder-path', type=Path, default=Path('/model/HuggingFace/Qwen/Qwen3-VL-4B-Instruct'))
+    p.add_argument('--vae-path', type=Path, default=Path('/model/ModelScope/krea/Krea-2-Raw'))
     args = p.parse_args()
     if platform.system() != 'Linux' or sys.version_info[:2] != (3, 12):
         raise ValueError('Expected isolated Linux Python 3.12')
@@ -55,7 +58,7 @@ def main():
     from extensions_built_in.diffusion_models.krea2.src.text_encoder import (
         PROMPT_TEMPLATE_ENCODE_PREFIX, PROMPT_TEMPLATE_ENCODE_START_IDX,
         PROMPT_TEMPLATE_ENCODE_SUFFIX)
-    te_path = '/model/HuggingFace/Qwen/Qwen3-VL-4B-Instruct'
+    te_path = str(args.text_encoder_path)
     tokenizer = AutoTokenizer.from_pretrained(te_path, local_files_only=True)
     counts, invalid = [], []
     for row in manifest['pairs']:
@@ -74,9 +77,9 @@ def main():
     if invalid:
         raise ValueError(f'{len(invalid)} captions exceed the approved token limit; captions unchanged')
     process = {'model': {'arch': 'krea2', 'name_or_path': 'krea/Krea-2-Raw'},
-               'local_model_assets': {'raw': '/model/ModelScope/krea/Krea-2-Raw/raw.safetensors',
+               'local_model_assets': {'raw': str(args.raw_path),
                                       'text_encoder': te_path,
-                                      'vae': '/model/ModelScope/krea/Krea-2-Raw',
+                                      'vae': str(args.vae_path),
                                       'manifest': str(args.asset_manifest)}}
     _, assets = resolve_krea_assets(process)
     write_json_atomic(args.output / 'public_assets_verified.json', assets)
