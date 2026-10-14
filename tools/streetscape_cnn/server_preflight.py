@@ -12,6 +12,23 @@ sys.path.insert(0, str(ROOT))
 from extensions_built_in.streetscape_cnn.contract import file_sha256, read_json, write_json_atomic
 from extensions_built_in.streetscape_cnn.assets import resolve_krea_assets
 
+EXPECTED_PACKAGES = {'torch': '2.9.1', 'torchvision': '0.24.1', 'torchaudio': '2.9.1',
+                     'torchao': '0.15.0', 'torchcodec': '0.9.0', 'bitsandbytes': '0.50.2'}
+
+
+def validate_environment_profile(profile, packages, cuda):
+    if profile not in ('locked', 'preinstalled'):
+        raise ValueError('Unknown environment profile')
+    if set(packages) != set(EXPECTED_PACKAGES) or any(not value for value in packages.values()):
+        raise ValueError(f'Training dependencies are incomplete: {packages}')
+    if profile == 'locked':
+        if any(packages[name].split('+')[0] != value for name, value in EXPECTED_PACKAGES.items()):
+            raise ValueError(f'Installed core versions differ: {packages}')
+        if cuda != '12.8':
+            raise ValueError('Approved CUDA stack is not active')
+    elif not cuda:
+        raise ValueError('Preinstalled PyTorch has no CUDA runtime')
+
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
@@ -21,21 +38,20 @@ def main():
     p.add_argument('--raw-path', type=Path, default=Path('/model/ModelScope/krea/Krea-2-Raw/raw.safetensors'))
     p.add_argument('--text-encoder-path', type=Path, default=Path('/model/HuggingFace/Qwen/Qwen3-VL-4B-Instruct'))
     p.add_argument('--vae-path', type=Path, default=Path('/model/ModelScope/krea/Krea-2-Raw'))
+    p.add_argument('--environment-profile', choices=('locked', 'preinstalled'), default='locked',
+                   help='Preinstalled retains image dependencies and requires the same numerical GPU checks')
     args = p.parse_args()
     if platform.system() != 'Linux' or sys.version_info[:2] != (3, 12):
         raise ValueError('Expected isolated Linux Python 3.12')
-    expected = {'torch': '2.9.1', 'torchvision': '0.24.1', 'torchaudio': '2.9.1',
-                'torchao': '0.15.0', 'torchcodec': '0.9.0', 'bitsandbytes': '0.50.2'}
-    packages = {name: version(name) for name in expected}
-    if any(packages[name].split('+')[0] != value for name, value in expected.items()):
-        raise ValueError(f'Installed core versions differ: {packages}')
+    packages = {name: version(name) for name in EXPECTED_PACKAGES}
     import torch
     import bitsandbytes as bnb
     from torchao.quantization import quantize_, Float8WeightOnlyConfig
     from extensions_built_in.diffusion_models.krea2.krea2 import Krea2Model
     from extensions_built_in.sd_trainer.SDTrainer import SDTrainer
-    if not torch.cuda.is_available() or torch.version.cuda != '12.8':
-        raise ValueError('Approved CUDA stack is not active')
+    if not torch.cuda.is_available():
+        raise ValueError('CUDA device is not available')
+    validate_environment_profile(args.environment_profile, packages, torch.version.cuda)
     layer = torch.nn.Linear(128, 128, bias=False).to('cuda', dtype=torch.bfloat16).requires_grad_(False)
     quantize_(layer, Float8WeightOnlyConfig())
     x = torch.randn(2, 128, device='cuda', dtype=torch.bfloat16, requires_grad=True)
@@ -84,7 +100,8 @@ def main():
     _, assets = resolve_krea_assets(process)
     write_json_atomic(args.output / 'public_assets_verified.json', assets)
     write_json_atomic(args.output / 'gpu_preflight.json',
-                      {'packages': packages, 'cuda': torch.version.cuda, 'gpu': torch.cuda.get_device_name(0),
+                      {'packages': packages, 'environment_profile': args.environment_profile,
+                       'cuda': torch.version.cuda, 'gpu': torch.cuda.get_device_name(0),
                        'bf16': torch.cuda.is_bf16_supported(), 'fp8_input_gradient': True,
                        'adamw8bit_update': True, 'native_imports': [Krea2Model.__name__, SDTrainer.__name__],
                        'max_caption_tokens': max(row['caption_tokens'] for row in counts), 'data_count': len(counts)})
