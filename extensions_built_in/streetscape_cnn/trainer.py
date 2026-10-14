@@ -10,6 +10,7 @@ import subprocess
 import hashlib
 import shutil
 import time
+import math
 import sys
 from contextlib import nullcontext
 from fnmatch import fnmatch
@@ -68,6 +69,11 @@ class StreetscapeCNNTrainer(SDTrainer):
         self.memory_acceptance = config.get('research_memory_acceptance', False)
         if type(self.memory_acceptance) is not bool:
             raise ValueError('research_memory_acceptance must be boolean')
+        self.gpu_reserve_gib = config.get('research_gpu_memory_reserve_gib')
+        if self.gpu_reserve_gib is not None:
+            if (not self.memory_acceptance or type(self.gpu_reserve_gib) not in (int, float)
+                    or not math.isfinite(self.gpu_reserve_gib) or self.gpu_reserve_gib <= 0):
+                raise ValueError('GPU reserve requires memory acceptance and a positive finite GiB value')
         self._memory_monitor = None
         validate_process(config, self.cnn_guidance)
         validate_explicit_training_settings(config, self.cnn_guidance)
@@ -208,7 +214,11 @@ class StreetscapeCNNTrainer(SDTrainer):
         if self.memory_acceptance:
             if self._recorder is None:
                 raise ResearchAbort('Memory acceptance requires durable research recording')
-            self._memory_monitor = PhaseMemoryMonitor(self.device_torch, self._recorder)
+            limit = None
+            if self.gpu_reserve_gib is not None:
+                limit = (torch.cuda.get_device_properties(self.device_torch).total_memory
+                         - int(self.gpu_reserve_gib * 2**30))
+            self._memory_monitor = PhaseMemoryMonitor(self.device_torch, self._recorder, limit_bytes=limit)
             original_backward = self.accelerator.backward
             def measured_backward(*args, **kwargs):
                 with self._memory_phase('backward'):

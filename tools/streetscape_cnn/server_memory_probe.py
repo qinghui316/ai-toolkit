@@ -19,6 +19,7 @@ def main():
     p.add_argument('config')
     p.add_argument('--root', type=Path, default=Path('/workspace/streetscape'))
     p.add_argument('--output', type=Path, required=True)
+    p.add_argument('--token-counts', type=Path, help='Existing approved preflight token inventory')
     args = p.parse_args()
     if args.output.exists():
         raise ValueError('Use a new immutable probe result')
@@ -74,7 +75,7 @@ def main():
     trainer.predict_noise, trainer.calculate_loss = predict, loss
 
     def probe(_unused):
-        counts = read_json(args.root/'acceptance/preflight/token_counts.json')['rows']
+        counts = read_json(args.token_counts or args.root/'acceptance/preflight/token_counts.json')['rows']
         longest = max((row for row in counts if row['role'] == 'train'), key=lambda row:(row['conditioning_tokens'],row['image_id']))
         largest, long_batch, largest_area = None, None, -1
         for batch in trainer.data_loader:

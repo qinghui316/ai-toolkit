@@ -73,8 +73,11 @@ class PhaseMemoryMonitor:
     Preserve the maximum across phase-local resets in each full native update.
     The monitor never reads or retains a scoring-path tensor.
     """
-    def __init__(self, device, recorder):
+    def __init__(self, device, recorder, limit_bytes=None):
         self.device, self.recorder = device, recorder
+        self.limit_bytes = MEMORY_LIMIT_BYTES if limit_bytes is None else int(limit_bytes)
+        if self.limit_bytes <= 0:
+            raise ValueError('GPU memory acceptance limit must be positive')
         self.phase_name = 'between_updates'
         self.step = 0
         self.peaks = {}
@@ -156,8 +159,9 @@ class PhaseMemoryMonitor:
     def check(self):
         if self.error:
             raise ResearchAbort(self.error)
-        if max(self.peaks.get('reserved', 0), self.peaks.get('process_gpu', 0)) > MEMORY_LIMIT_BYTES:
-            raise ResearchAbort('Memory acceptance gate exceeded 28 GiB; use next registered profile in a new directory')
+        limit = getattr(self, 'limit_bytes', MEMORY_LIMIT_BYTES)
+        if max(self.peaks.get('reserved', 0), self.peaks.get('process_gpu', 0)) > limit:
+            raise ResearchAbort(f'GPU memory acceptance gate exceeded {limit} bytes; stop this attempt')
 
     def close(self):
         self._stop.set()
